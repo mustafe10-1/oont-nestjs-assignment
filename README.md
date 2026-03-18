@@ -1,6 +1,6 @@
 # Grocery Delivery Microservice (NestJS)
 
-NestJS backend take-home implementation for products, categories, carts, and orders using PostgreSQL + Prisma.
+NestJS backend take-home implementation for products, categories, carts, and orders using PostgreSQL and Prisma.
 
 ## Tech stack
 
@@ -27,7 +27,7 @@ cp .env.example .env
 npm install
 ```
 
-3. Start Postgres:
+3. Start PostgreSQL:
 
 ```bash
 docker compose up -d db
@@ -56,14 +56,17 @@ npm run start:dev
 docker compose up --build
 ```
 
-This runs PostgreSQL and the Nest app together. DB readiness is handled via healthcheck + dependency condition.
+This runs PostgreSQL and the NestJS application together. Database readiness is handled via health checks and dependency conditions.
 
 ## API summary
 
 ### Products and categories
 
-- `GET /products` - available products (`stock > 0`) with `page`, `limit`, `categoryId`, `search`, `sort=asc|desc` by `priceCents`
-- `GET /products/:id` - single product including current `stock`
+- `GET /products` — available products (`stock > 0`) with:
+  - pagination: `page`, `limit`
+  - filters: `categoryId`, `search`
+  - sorting: `sort=asc|desc` by `priceCents`
+- `GET /products/:id` — single product including current `stock`
 - `GET /categories`
 - `GET /categories/:id/products`
 
@@ -71,7 +74,7 @@ This runs PostgreSQL and the Nest app together. DB readiness is handled via heal
 
 - `GET /cart/:userId`
 - `POST /cart/:userId/items`
-  - If the item already exists, quantity is incremented.
+  - If the item already exists, quantity is incremented
 - `PUT /cart/:userId/items/:productId`
 - `DELETE /cart/:userId/items/:productId`
 - `DELETE /cart/:userId`
@@ -84,22 +87,26 @@ This runs PostgreSQL and the Nest app together. DB readiness is handled via heal
 
 ## Business behavior
 
-- Cart is persisted in PostgreSQL and scoped by `userId`.
+- Cart is persisted in PostgreSQL and scoped by `userId`
 - Successful order creation:
-  - validates stock for all cart items,
-  - creates order with `PENDING` status,
-  - decrements stock,
-  - clears cart.
-- Failed order creation returns HTTP `400` with detailed `outOfStockItems` and does **not** change stock/cart.
-- Cancel order restores stock and marks order as `CANCELLED`.
+  - validates stock for all cart items
+  - creates order with `PENDING` status
+  - decrements stock
+  - clears the cart
+- Failed order creation:
+  - returns HTTP `400` with detailed `outOfStockItems`
+  - does **not** modify stock or cart
+- Order cancellation:
+  - restores stock
+  - updates status to `CANCELLED`
 
 ## Concurrency strategy
 
-Checkout and cancellation use database transactions and row-level locking.
+Checkout and cancellation are handled using database transactions and row-level locking to ensure consistency under concurrent requests.
 
 ### Locking implementation
 
-In `POST /orders`, all product rows for cart items are locked using raw SQL in the same transaction:
+During `POST /orders`, all relevant product rows are locked within a single transaction:
 
 ```sql
 SELECT "id", "stock", "deletedAt"
@@ -109,20 +116,20 @@ ORDER BY "id"
 FOR UPDATE;
 ```
 
-Why this is safe:
+### Why this is safe
 
-- `FOR UPDATE` serializes concurrent checkouts touching the same products.
-- Stock validation and stock decrement happen while locks are held.
-- If validation fails, transaction throws, so no stock/cart mutation is committed.
+- `FOR UPDATE` ensures concurrent checkouts affecting the same products are serialized
+- Stock validation and decrement occur while locks are held
+- If validation fails, the transaction rolls back, preventing partial updates
+- Product IDs are sorted before locking to reduce deadlock risk
 
-Product IDs are sorted before locking to reduce deadlock risk.
-Order cancellation also locks the target order row (`FOR UPDATE`) before status checks, preventing concurrent double-cancel requests from restoring stock twice.
+Order cancellation also locks the target order row before checking its status, preventing concurrent double-cancel operations from restoring stock multiple times.
 
 ## Design decisions
 
-- Feature modularization with `ProductModule`, `CategoryModule`, `CartModule`, and `OrderModule`.
-- Prisma schema with explicit relations and indexes for cart/order queries.
-- `OrderItem` snapshot fields for historical integrity.
-- Product soft-delete via `deletedAt`.
+- Modular architecture using `ProductModule`, `CategoryModule`, `CartModule`, and `OrderModule`
+- Prisma schema with explicit relations and indexes for efficient cart and order queries
+- `OrderItem` snapshot fields to preserve historical data integrity
+- Soft delete implementation for products using `deletedAt`
 
-See also: [`SCHEMA.md`](./SCHEMA.md).
+See also: [`SCHEMA.md`](./SCHEMA.md)
